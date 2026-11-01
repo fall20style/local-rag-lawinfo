@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>로컬 법률 RAG 성능 벤치마크 — 라마.cpp 전환과 KV 캐시 양자화</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #171e2e;
+    --ink: #e8ecf4;
+    --dim: #9aa7bd;
+    --blue: #4a90d9;   /* Ollama */
+    --orange: #f5a623; /* llama.cpp */
+    --green: #3ecf8e;  /* KV */
+    --red: #e0616f;
+    --accent: #7c6cf7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif; }
+  .deck { position: relative; height: 100vh; overflow: hidden; }
+  .slide {
+    position: absolute; inset: 0; display: none;
+    padding: 48px 72px 72px; flex-direction: column;
+  }
+  .slide.active { display: flex; animation: fade .35s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none;} }
+
+  h1 { font-size: 44px; line-height: 1.25; letter-spacing: -0.5px; }
+  h2 { font-size: 30px; margin-bottom: 6px; letter-spacing: -0.3px; }
+  .kicker { color: var(--accent); font-weight: 700; font-size: 15px;
+    letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+  .sub { color: var(--dim); font-size: 16px; margin-bottom: 26px; }
+
+  .grid { display: grid; gap: 18px; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .card {
+    background: var(--panel); border: 1px solid #232c42; border-radius: 14px;
+    padding: 20px 24px;
+  }
+  .card h3 { font-size: 15px; color: var(--dim); margin-bottom: 6px; }
+  .big { font-size: 46px; font-weight: 800; letter-spacing: -1px; }
+  .unit { font-size: 16px; color: var(--dim); font-weight: 500; margin-left: 4px; }
+  .good { color: var(--green); } .bad { color: var(--red); } .blue { color: var(--blue); } .orange { color: var(--orange); }
+  .note { font-size: 13.5px; color: var(--dim); margin-top: 8px; line-height: 1.55; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #232c42; text-align: left; }
+  th { color: var(--dim); font-weight: 600; font-size: 13.5px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  svg text { fill: var(--ink); font-family: inherit; }
+  .axis { stroke: #2a3550; stroke-width: 1; }
+  .val { font-size: 12px; font-weight: 700; }
+  .lbl { font-size: 12.5px; fill: var(--dim); }
+
+  .legend { display: flex; gap: 18px; margin-bottom: 10px; font-size: 13.5px; color: var(--dim); }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .footer { position: absolute; bottom: 20px; left: 72px; right: 72px;
+    display: flex; justify-content: space-between; color: #55617c; font-size: 12.5px; }
+  .dots { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #27314983; cursor: pointer; }
+  .dot.on { background: var(--accent); }
+  .cover-chips { display: flex; gap: 10px; margin-top: 28px; flex-wrap: wrap; }
+  .chip { background: #1c2540; border: 1px solid #2a3550; border-radius: 999px;
+    padding: 8px 16px; font-size: 14px; color: var(--dim); }
+  ul.clean { list-style: none; font-size: 17px; line-height: 2.0; }
+  ul.clean li::before { content: "—"; color: var(--accent); margin-right: 10px; font-weight: 700; }
+  .verdict { display: inline-block; padding: 4px 12px; border-radius: 8px; font-size: 14px; font-weight: 700; }
+  .verdict.good { background: #143527; } .verdict.bad { background: #3a2027; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+  <!-- ═══════════ S1 표지 ═══════════ -->
+  <section class="slide active">
+    <div style="margin: auto 0; max-width: 900px;">
+      <div class="kicker">Performance Benchmark · On-premise</div>
+      <h1>로컬 법률 RAG,<br>백엔드를 갈아엎으면 얼마나 빨라질까?</h1>
+      <p class="sub" style="margin-top:18px;">Ollama → llama-cpp-python 전환 + KV 캐시 양자화 실측 리포트</p>
+      <div class="cover-chips">
+        <span class="chip">Qwen2.5 7B Instruct Q4_K_M</span>
+        <span class="chip">CPU 전용 · i7-1360P · 15.7GB RAM</span>
+        <span class="chip">동일 모델·프롬프트·데이터 측정</span>
+        <span class="chip">2026-11-01 측정</span>
+      </div>
+    </div>
+    <div class="footer"><span>local-rag-law / BENCHMARKS.md</span><span>→ 키보드 ←/→ 또는 클릭으로 이동</span></div>
+  </section>
+
+  <!-- ═══════════ S2 측정 조건 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">Setup</div>
+    <h2>공정 비교 조건 — "같은 모델, 같은 질문, 같은 머신"</h2>
+    <p class="sub">가변 요소를 하나도 두지 않은 1:1 측정</p>
+    <div class="grid cols-2" style="flex:1;">
+      <div class="card">
+        <h3>환경 (타깃 하드웨어 그대로)</h3>
+        <table>
+          <tr><td>CPU</td><td class="num">i7-1360P · 6P+8E / 16T · GPU 없음</td></tr>
+          <tr><td>RAM</td><td class="num">15.7 GB 전체 (CPU-only)</td></tr>
+          <tr><td>OS</td><td class="num">Windows 11</td></tr>
+          <tr><td>임베딩</td><td class="num">ko-sbert-nli (CPU) + Chroma, k=1</td></tr>
+        </table>
+        <div class="note">질문 3종 × 백엔드 2종, temperature=0 · max 350 tokens · 반복 측정으로 재현성 확인</div>
+      </div>
+      <div class="card">
+        <h3>비교 백엔드</h3>
+        <table>
+          <tr><th></th><th class="num"><span class="sw" style="background:var(--blue)"></span>Ollama</th><th class="num"><span class="sw" style="background:var(--orange)"></span>llama-cpp-python</th></tr>
+          <tr><td>실행 구조</td><td class="num">서버 프로세스 분리</td><td class="num">인프로세스 (서버 불필요)</td></tr>
+          <tr><td>가중치</td><td class="num" colspan="2">동일 GGUF · Qwen2.5 7B Q4_K_M (4.36 GB)</td></tr>
+          <tr><td>컨텍스트</td><td class="num">num_ctx=2048</td><td class="num">n_ctx=2048</td></tr>
+          <tr><td>스레드</td><td class="num">기본</td><td class="num">n_threads=8</td></tr>
+        </table>
+        <div class="note">Ollama 캐시의 가중치 blob을 그대로 GGUF로 추출해 다운로드 없이 재사용</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ S3 헤드라인 수치 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">Headline Numbers</div>
+    <h2>한눈에 보는 결과 — 지연시간은 큰 폭 개선</h2>
+    <p class="sub">TTFT(첫 토큰까지 시간)가 응답 대기 체감을 지배합니다</p>
+    <div class="grid cols-3" style="flex:1; align-content:start; margin-top: 6px;">
+      <div class="card"><h3>콜드 로드 (모델 첫 접속)</h3>
+        <div class="big"><span class="blue">21.0s</span> → <span class="orange">9.3s</span></div>
+        <div class="note">2.3배 빠름 — 앱 재시작 후 첫 질문 체감 개선</div></div>
+      <div class="card"><h3>TTFT 평균 (warm)</h3>
+        <div class="big"><span class="blue">9,369</span><span class="unit">ms</span> → <span class="orange">2,226</span><span class="unit">ms</span></div>
+        <div class="note" style="color:var(--green); font-weight:700;">4.2배 빠름 — 채팅 타이핑 시작까지의 대기</div></div>
+      <div class="card"><h3>총 응답 시간 평균</h3>
+        <div class="big"><span class="blue">23.9s</span> → <span class="orange">15.7s</span></div>
+        <div class="note" style="color:var(--green); font-weight:700;">−34% — 요청당 고정 오버헤드 ~1.5s 제거 효과</div></div>
+      <div class="card" style="grid-column: span 1;"><h3>생성 속도 (tok/s)</h3>
+        <div class="big"><span class="blue">6.99</span> vs <span class="orange">5.44</span></div>
+        <div class="note" style="color:var(--red); font-weight:700;">−22% — 이 항목만 Ollama 우세</div></div>
+      <div class="card"><h3>메모리 (RSS 피크)</h3>
+        <div class="big"><span class="blue">4.9GB</span> <span class="unit">+앱 별도</span><br>
+          vs <span class="orange">8.0GB</span></div>
+        <div class="note" style="color:var(--red);">절대 메모리는 Ollama 유리 — 유일한 트레이드오프</div></div>
+      <div class="card"><h3>종합 판정</h3>
+        <div class="big" style="font-size:24px; line-height:1.5; margin-top:10px;">
+          <span class="verdict good">UX 개선 대 승</span>&nbsp; <span class="verdict bad">메모리 대 패</span></div>
+        <div class="note">한 앱이 모든 지표를 잇는 건 아니다 — 목적에 따라 선택 필요</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ S4 TTFT 차트 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">Latency</div>
+    <h2>TTFT (첫 토큰 시간) — warm 기준</h2>
+    <p class="sub">llama.cpp는 요청마다 약 0.2s에 첫 글자를 띄웁니다 · Ollama는 1.3~2.0s + 서버 오버헤드</p>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--blue)"></span>Ollama</span>
+      <span><span class="sw" style="background:var(--orange)"></span>llama-cpp-python</span>
+    </div>
+    <svg viewBox="0 0 900 340" style="width:100%; max-height:62vh;">
+      <line class="axis" x1="60" y1="20" x2="60" y2="290"/>
+      <line class="axis" x1="60" y1="290" x2="880" y2="290"/>
+      <!-- y labels: 0 / 12.5k / 25k -->
+      <text class="lbl" x="6" y="294">0</text>
+      <text class="lbl" x="6" y="160">12.5k</text>
+      <text class="lbl" x="6" y="26">25k ms</text>
+      <line class="axis" x1="60" y1="155" x2="880" y2="155" stroke-dasharray="4 6"/>
+
+      <!-- Q1: scale h = v/25000*270 ; base y 290 -->
+      <rect x="120" y="22" width="70" height="268" rx="6" fill="var(--blue)" opacity="0.9"/>
+      <text class="val" x="155" y="16" text-anchor="middle">24,788 ms</text>
+      <rect x="200" y="222" width="70" height="68" rx="6" fill="var(--orange)"/>
+      <text class="val" x="235" y="214" text-anchor="middle">6,273 ms</text>
+      <text class="lbl" x="195" y="312" text-anchor="middle">개인정보 고지 항목</text>
+
+      <!-- Q2: 1973→h21, 180→h2 -->
+      <rect x="410" y="269" width="70" height="21" rx="5" fill="var(--blue)" opacity="0.9"/>
+      <text class="val" x="445" y="258" text-anchor="middle">1,973 ms</text>
+      <rect x="490" y="288" width="70" height="2" rx="1" fill="var(--orange)"/>
+      <text class="val" x="525" y="281" text-anchor="middle">180 ms</text>
+      <text class="lbl" x="485" y="312" text-anchor="middle">야간 수당</text>
+
+      <!-- Q3: 1346→h15, 226→h2.4 -->
+      <rect x="700" y="275" width="70" height="15" rx="5" fill="var(--blue)" opacity="0.9"/>
+      <text class="val" x="735" y="264" text-anchor="middle">1,346 ms</text>
+      <rect x="780" y="287" width="70" height="3" rx="1.5" fill="var(--orange)"/>
+      <text class="val" x="815" y="280" text-anchor="middle">226 ms</text>
+      <text class="lbl" x="775" y="312" text-anchor="middle">안내문 작성</text>
+    </svg>
+    <div class="note" style="margin-top:10px;">① Ollama는 HTTP 왕복 + 서버 큐잉 비용 존재 ② llama.cpp는 첫 질문만 6.3s(템플릿 예열), 이후 0.2s 안정 ③ 스트리밍 UI라 TTFT 개선이 체감 UX에 직결</div>
+  </section>
+
+  <!-- ═══════════ S5 속도·총 응답 차트 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">Throughput &amp; Total</div>
+    <h2>생성 속도와 총 응답 — 양쪽 모두 잃지 않는 절충</h2>
+    <p class="sub">왼쪽: 정직하게 기록한 역방향 지표 · 오른쪽: 사용자 체감 총 시간</p>
+    <div class="grid cols-2" style="flex:1;">
+      <div class="card">
+        <h3>생성 속도 (tok/s) — Ollama가 우세</h3>
+        <svg viewBox="0 0 420 300" style="width:100%;">
+          <line class="axis" x1="40" y1="10" x2="40" y2="250"/>
+          <line class="axis" x1="40" y1="250" x2="400" y2="250"/>
+          <text class="lbl" x="8" y="254">0</text>
+          <text class="lbl" x="4" y="14">8 tok/s</text>
+          <rect x="90" y="61" width="90" height="189" rx="6" fill="var(--blue)" opacity="0.9"/>
+          <text class="val" x="135" y="52" text-anchor="middle">6.99</text>
+          <text class="lbl" x="135" y="270" text-anchor="middle">Ollama</text>
+          <rect x="240" y="99" width="90" height="151" rx="6" fill="var(--orange)"/>
+          <text class="val" x="285" y="90" text-anchor="middle">5.44</text>
+          <text class="lbl" x="285" y="270" text-anchor="middle">llama.cpp</text>
+          <text class="val" x="222" y="300" text-anchor="middle" fill="var(--red)">−22%</text>
+        </svg>
+        <div class="note">12스레드 재시험에서도 5.2~5.5 tok/s에 머무름 → P/E 혼합 CPU에서 생성 속도 상한은 8스레드 근처</div>
+      </div>
+      <div class="card">
+        <h3>총 응답 시간 평균 — llama.cpp가 34% 빠름</h3>
+        <svg viewBox="0 0 420 300" style="width:100%;">
+          <line class="axis" x1="40" y1="10" x2="40" y2="250"/>
+          <line class="axis" x1="40" y1="250" x2="400" y2="250"/>
+          <text class="lbl" x="8" y="254">0</text>
+          <text class="lbl" x="0" y="14">30 s</text>
+          <rect x="90" y="51" width="90" height="199" rx="6" fill="var(--blue)" opacity="0.9"/>
+          <text class="val" x="135" y="42" text-anchor="middle">23.9 s</text>
+          <text class="lbl" x="135" y="270" text-anchor="middle">Ollama</text>
+          <rect x="240" y="82" width="90" height="168" rx="6" fill="var(--orange)"/>
+          <text class="val" x="285" y="73" text-anchor="middle">15.7 s</text>
+          <text class="lbl" x="285" y="270" text-anchor="middle">llama.cpp</text>
+          <text class="val" x="222" y="300" text-anchor="middle" fill="var(--green)">−34%</text>
+        </svg>
+        <div class="note">TTFT 4.2배 개선이 총 시간 감소를 주도 — 채팅형 UI에서 가장 유효한 지표</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ S6 KV 양자화 - 메모리 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">KV Cache Quantization · Memory</div>
+    <h2>KV 캐시 양자화 — 프리미스 메모리 47% 절감</h2>
+    <p class="sub">n_ctx=8192 기준 공식 컨텍스트 생성 보고값 · q8_0 (flash_attn=True)</p>
+    <div class="grid cols-2" style="flex:1;">
+      <div class="card">
+        <h3>KV 버퍼 크기 (MiB)</h3>
+        <svg viewBox="0 0 460 320" style="width:100%;">
+          <line class="axis" x1="46" y1="10" x2="46" y2="270"/>
+          <line class="axis" x1="46" y1="270" x2="440" y2="270"/>
+          <text class="lbl" x="10" y="274">0</text>
+          <text class="lbl" x="4" y="14">480 MiB</text>
+          <rect x="66" y="19" width="105" height="251" rx="6" fill="#6b7ba1" opacity="0.95"/>
+          <text class="val" x="118" y="12" text-anchor="middle">448</text>
+          <text class="lbl" x="118" y="290" text-anchor="middle">기본 f16</text>
+          <rect x="196" y="77" width="105" height="193" rx="6" fill="var(--green)" opacity="0.75"/>
+          <text class="val" x="248" y="70" text-anchor="middle">343</text>
+          <text class="lbl" x="248" y="290" text-anchor="middle">K = q8_0</text>
+          <rect x="326" y="137" width="105" height="133" rx="6" fill="var(--green)"/>
+          <text class="val" x="378" y="130" text-anchor="middle">238</text>
+          <text class="lbl" x="378" y="290" text-anchor="middle">K+V = q8_0</text>
+          <text class="val" x="296" y="315" text-anchor="middle" fill="var(--green)">−47%</text>
+        </svg>
+      </div>
+      <div class="card">
+        <h3>해석</h3>
+        <ul class="clean">
+          <li>K만 절반: <b>−105 MiB (−23%)</b></li>
+          <li>K+V 둘 다: <b>−210 MiB (−47%)</b></li>
+          <li>절감량은 컨텍스트 길이에 <b>선형 비례</b> — n_ctx 2048에서는 −53 MiB로 작음</li>
+          <li>V 캐시 양자화는 <b>Flash Attention 필수</b></li>
+          <li>compute buffer: 311 → 318 MiB (dequant 스크래치로 <b>약 +7 MiB</b>)</li>
+        </ul>
+        <div class="note">품질: KV 수치 변화가 greedy 출력에 미세 영향 → 응답 길이 55~106 tok 변동 관측. 법률 정답성 우선이면 품질 점검 권장</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ S7 KV 양자화 - 속도 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">KV Cache Quantization · Speed</div>
+    <h2>KV q8_0 속도 — 컨텍스트 짧으면 이득, 길면 손해</h2>
+    <p class="sub">KV 양자화의 득실은 컨텍스트 길이가 갈렸다 (2회 반복 평균, q1 예열 제외)</p>
+    <div class="grid cols-2" style="flex:1;">
+      <div class="card">
+        <h3>n_ctx = 2048 — 실서비스 구간</h3>
+        <svg viewBox="0 0 420 300" style="width:100%;">
+          <line class="axis" x1="40" y1="10" x2="40" y2="250"/>
+          <line class="axis" x1="40" y1="250" x2="400" y2="250"/>
+          <text class="lbl" x="6" y="254">0</text>
+          <text class="lbl" x="2" y="14">7 tok/s</text>
+          <rect x="90" y="80" width="90" height="170" rx="6" fill="#6b7ba1" opacity="0.95"/>
+          <text class="val" x="135" y="72" text-anchor="middle">5.60</text>
+          <text class="lbl" x="135" y="270" text-anchor="middle">f16 기본</text>
+          <rect x="240" y="57" width="90" height="193" rx="6" fill="var(--green)"/>
+          <text class="val" x="285" y="49" text-anchor="middle">6.50</text>
+          <text class="lbl" x="285" y="270" text-anchor="middle">K+V q8_0</text>
+          <text class="val" x="222" y="300" text-anchor="middle" fill="var(--green)">+16%</text>
+        </svg>
+        <div class="note" style="color:var(--green); font-weight:700;">RAM −47% + 속도 +16% — 동시 개선</div>
+      </div>
+      <div class="card">
+        <h3>n_ctx = 8192 — 긴 문서 주입 구간</h3>
+        <svg viewBox="0 0 420 300" style="width:100%;">
+          <line class="axis" x1="40" y1="10" x2="40" y2="250"/>
+          <line class="axis" x1="40" y1="250" x2="400" y2="250"/>
+          <text class="lbl" x="6" y="254">0</text>
+          <text class="lbl" x="2" y="14">7 tok/s</text>
+          <rect x="90" y="71" width="90" height="179" rx="6" fill="#6b7ba1" opacity="0.95"/>
+          <text class="val" x="135" y="63" text-anchor="middle">6.26</text>
+          <text class="lbl" x="135" y="270" text-anchor="middle">f16 기본</text>
+          <rect x="240" y="82" width="90" height="168" rx="6" fill="var(--red)" opacity="0.8"/>
+          <text class="val" x="285" y="74" text-anchor="middle">5.72</text>
+          <text class="lbl" x="285" y="270" text-anchor="middle">K+V q8_0</text>
+          <text class="val" x="222" y="300" text-anchor="middle" fill="var(--red)">−9%</text>
+        </svg>
+        <div class="note" style="color:var(--red);">디코드 어텐션이 전체 KV를 순회하며 q8 dequant 비용이 컨텍스트 길이에 비례 → CPU에서는 f16보다 느려지는 반전. 해법: <b>type_v를 f16으로</b> (K만 양자화 −23%)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ S8 결론 ═══════════ -->
+  <section class="slide">
+    <div class="kicker">Verdict</div>
+    <h2>결론 — 목적이 갈리는 선택지</h2>
+    <p class="sub">모든 지표의 승자는 없다. 요구를 먼저 정하는 것이 정답</p>
+    <div class="grid cols-3" style="flex:1; align-content:start;">
+      <div class="card"><h3>현재 확정 운영 세팅</h3>
+        <table>
+          <tr><td colspan="2" class="num"><code style="font-size:14px;">flash_attn=True<br>type_k=8 · type_v=8</code></td></tr>
+          <tr><td>KV 버퍼</td><td class="num" style="color:var(--green)">−47%</td></tr>
+          <tr><td>warm TTFT</td><td class="num" style="color:var(--green)">4.2배 빠름</td></tr>
+          <tr><td>n_ctx</td><td class="num">2048 유지</td></tr>
+        </table>
+        <div class="note">단문 법률 QA (n_ctx ≤ 2048)</div></div>
+      <div class="card"><h3>긴 문서 사용 시</h3>
+        <table>
+          <tr><td colspan="2" class="num"><code style="font-size:14px;">type_k=8 · type_v=1</code></td></tr>
+          <tr><td>KV 버퍼</td><td class="num" style="color:var(--green)">−23%</td></tr>
+          <tr><td>속도</td><td class="num" style="color:var(--green)">f16 수준 유지</td></tr>
+          <tr><td>n_ctx</td><td class="num">8192+</td></tr>
+        </table>
+        <div class="note">V 캐시 dequant 부하 회피 — CPU 장기 컨텍스트 안전책</div></div>
+      <div class="card"><h3>메모리가 최우선이면</h3>
+        <table>
+          <tr><td>Ollama 유지</td><td class="num" style="color:var(--blue)">RSS 4.9GB</td></tr>
+          <tr><td>tok/s</td><td class="num" style="color:var(--blue)">+20% 빠름</td></tr>
+        </table>
+        <div class="note">임베딩·인덱스가 앱과 분리되는 Ollama 쪽이 절대 메모리 우위. 콜드스타트 21s와 TTFT 오버헤드가 비용</div></div>
+    </div>
+    <div class="note" style="text-align:center; font-size: 15px;">
+      원본 데이터: <code>benchmarks/results_*.json</code> · 해석 리포트: <code>BENCHMARKS.md</code> · 실행법: <code>USAGE.md</code>
+    </div>
+  </section>
+
+</div>
+
+<div class="dots" id="dots"></div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const dots = document.getElementById('dots');
+  let cur = 0;
+  slides.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'dot' + (i === 0 ? ' on' : '');
+    d.onclick = () => go(i);
+    dots.appendChild(d);
+  });
+  function go(i) {
+    if (i < 0 || i >= slides.length) return;
+    slides[cur].classList.remove('active');
+    dots.children[cur].classList.remove('on');
+    cur = i;
+    slides[cur].classList.add('active');
+    dots.children[cur].classList.add('on');
+  }
+  addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') go(cur + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') go(cur - 1);
+    if (e.key === 'Home') go(0);
+    if (e.key === 'End') go(slides.length - 1);
+  });
+  addEventListener('click', e => { if (e.target === document.body || e.target.closest('.deck')) go(cur + 1); });
+  document.getElementById('dots').addEventListener('click', e => e.stopPropagation());
+</script>
+</body>
+</html>
