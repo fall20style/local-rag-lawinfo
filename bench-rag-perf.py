@@ -155,17 +155,39 @@ def bench_ollama(model: str, questions: list[str], retriever, prompt, max_tokens
 
 # ---------------------------------------------------------------- llama.cpp 백엔드
 def bench_llamacpp(gguf: str, questions: list[str], retriever, prompt,
-                   n_threads: int, n_ctx: int, max_tokens: int):
-    print(f"\n=== [2/2] llama-cpp-python ({gguf}) ===")
+                   n_threads: int, n_ctx: int, max_tokens: int,
+                   type_k: int | None = None, type_v: int | None = None,
+                   no_mmap: bool = False):
+    # type_k/type_v: None=기본(f16), 1=GGML_TYPE_F16, 8=GGML_TYPE_Q8_0
+    label = f"type_k={type_k}, type_v={type_v}" if (type_k or type_v) else "type_k/v default(f16)"
+    print(f"\n=== [2/2] llama-cpp-python ({gguf}, {label}, n_ctx={n_ctx}) ===")
     from llama_cpp import Llama
     results = {"backend": "llamacpp", "model": Path(gguf).name,
-               "threads": n_threads, "n_ctx": n_ctx, "runs": [], "ram": {}}
+               "threads": n_threads, "n_ctx": n_ctx,
+               "type_k": type_k, "type_v": type_v, "runs": [], "ram": {}}
+
+    kwargs = {"model_path": gguf, "n_ctx": n_ctx, "n_threads": n_threads,
+              "n_batch": 512, "verbose": False, "flash_attn": True,
+              "use_mmap": not no_mmap}
+    if type_k is not None:
+        kwargs["type_k"] = type_k
+    if type_v is not None:
+        kwargs["type_v"] = type_v
 
     t0 = time.perf_counter()
-    llama = Llama(model_path=gguf, n_ctx=n_ctx, n_threads=n_threads,
-                  n_batch=512, verbose=False)
+    llama = Llama(**kwargs)
     results["load_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     print(f"  모델 로드 {results['load_ms']/1000:.1f}s")
+
+    # KV 캐시 예상 크기 (n_layer × head_kv × head_dim × n_ctx × 2(K,V) × elem_bytes)
+    try:
+        bytes_per = {None: 2.0, 1: 2.0, 8: 1.05}   # 기본(f16) / f16 / q8_0 근사
+        kv_k_mb = llama.n_layer * llama.n_head_kv * llama.head_dim * n_ctx * bytes_per.get(type_k, 2.0)
+        kv_v_mb = llama.n_layer * llama.n_head_kv * llama.head_dim * n_ctx * bytes_per.get(type_v, 2.0)
+        results["kv_est_mb"] = round((kv_k_mb + kv_v_mb) / 1024**2, 1)
+        print(f"  KV 캐시 예상 크기: {results['kv_est_mb']} MB")
+    except Exception:
+        pass
 
     sampler = RamSampler()
     sampler.start()
@@ -266,6 +288,13 @@ def main():
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--max-tokens", type=int, default=350)
     ap.add_argument("--tag", default="qwen25-7b-q4k8")
+    ap.add_argument("--n-ctx", type=int, default=2048)
+    ap.add_argument("-k", dest="type_k", type=int, default=None,
+                    help="KV 캐시 K 양자화 (None=기본 f16, 1=f16, 8=q8_0)")
+    ap.add_argument("-v", dest="type_v", type=int, default=None,
+                    help="KV 캐시 V 양자화 (None=기본 f16, 1=f16, 8=q8_0)")
+    ap.add_argument("--no-mmap", action="store_true",
+                    help="mmap을 끄고 가중치를 메모리에 완전 로드 (RSS 측정 안정화)")
     args = ap.parse_args()
 
     OUT_DIR.mkdir(exist_ok=True)
@@ -288,7 +317,9 @@ def main():
 
     if args.backend in ("llamacpp", "both"):
         out["llamacpp"] = bench_llamacpp(args.gguf, BENCH_QUESTIONS, retriever, prompt,
-                                         args.threads, 2048, args.max_tokens)
+                                         args.threads, args.n_ctx, args.max_tokens,
+                                         type_k=args.type_k, type_v=args.type_v,
+                                         no_mmap=args.no_mmap)
 
     json.dump(out, open(OUT_DIR / f"results_{args.tag}.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=2)

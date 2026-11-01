@@ -25,11 +25,16 @@ def init_rag_system():
     from llama_cpp import Llama
 
     # 1. llama.cpp 인프로세스 LLM (Ollama 서버 불필요)
+    #    - flash_attn=True + KV 캐시 q8_0 양자화: RAM -47%, 디코드 +16% (BENCHMARKS.md §6)
+    #    - 장기 컨텍스트(n_ctx>=8192)에서는 type_v를 f16으로 되돌릴 것 (속도 역전)
     llama = Llama(
         model_path=GGUF_PATH,
         n_ctx=2048,
         n_threads=8,        # 하이브리드 CPU: 4 P-core + 4 E-core 균형점
         n_batch=512,
+        flash_attn=True,
+        type_k=8,           # GGML_TYPE_Q8_0
+        type_v=8,           # GGML_TYPE_Q8_0
         verbose=False,
     )
 
