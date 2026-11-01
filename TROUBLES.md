@@ -113,6 +113,24 @@
 - **원인**: Ollama는 이전 요청과 옵션이 다르면(`num_ctx` 등) 러너를 재기동. 기본 컨텍스트로 워밍업 후 `num_ctx=2048` 지정 요청이 와서 재로딩 발생.
 - **해결**: 앱 레벨에서는 동일 옵션 일관성 유지로 방지. 이는 llama.cpp 인프로세스 방식에서는 원천적으로 발생하지 않는 문제 (BENCHMARKS.md §3.2 참고).
 
+## 13. llama-cpp-python의 type_k/type_v 잘못된 값 → 컨텍스트 생성 실패
+
+- **증상**: `Llama(type_k=16)` 전달 시 `ValueError: Failed to create llama_context`.
+- **원인**: llama-cpp-python 문서 기본값 `16`은 "미지정" 의미의 센티넬이지 GGML 타입이 아님. 실제 값은 `GGML_TYPE_F16=1`, `GGML_TYPE_Q8_0=8`.
+- **해결**: 명시 시 1(f16)/8(q8_0)을 사용하고, 미지정은 None으로 두고 인자 생략. (`python -c "import llama_cpp; print(int(llama_cpp.GGML_TYPE_F16))"`로 확인 가능)
+
+## 14. V 캐시 양자화(type_v=q8_0) 시 컨텍스트 생성 실패
+
+- **증상**: `type_v=8` 단독 지정 시 `Failed to create llama_context` (K만 양자화하면 정상).
+- **원인**: llama.cpp는 V 캐시 양자화에 Flash Attention 활성화가 전제.
+- **해결**: `Llama(..., flash_attn=True)`를 함께 지정. K+V 양자화 비교 실험 시 f16 기준선도 FA=True로 통일해 공정하게 재측정.
+
+## 15. no-mmap 풀 벤치 실행 중 머신 스래싱으로 타임아웃
+
+- **증상**: `use_mmap=False`로 4.3GB 가중치를 통째로 RAM 적재하는 벤치가 타임아웃, 잔존 프로세스가 5.9GB 점유.
+- **원인**: 여유 RAM ~7GB 환경에서 가중치 전체 상주 + 컨퓨트 버퍼 조합이 커밋 한계를 넘어 페이지아웃 스래싱.
+- **해결**: RSS 기반 메모리 비교는 폐기하고, 컨텍스트 생성 로그의 공식 KV/compute buffer 값(`benchmarks/kv_size_probe.py`)으로 대체. 저사양 머신에서 no-mmap 실행은 배경 앱 없이 단독으로만 할 것.
+
 ---
 
 ## 메모 / 미해결
