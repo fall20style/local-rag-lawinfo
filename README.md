@@ -32,6 +32,7 @@ local-rag-law/
     ├── IMPLEMENTATION.md # 구현 상세
     ├── TROUBLES.md      # 트러블슈팅 기록
     ├── BENCHMARKS.md    # Ollama vs llama-cpp-python 측정 리포트
+    ├── USAGE.md         # 앱별 실행 가이드
     └── BLOG_POST.md     # 소개용 블로그 글
 ```
 
