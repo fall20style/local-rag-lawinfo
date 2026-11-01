@@ -1,0 +1,15 @@
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Chroma 영속 DB
+.chroma/
+
+# OS
+Thumbs.db
+.DS_Store
