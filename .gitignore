@@ -10,6 +10,10 @@ venv/
 # Chroma 영속 DB
 .chroma/
 
+# 로컬 모델 가중치 (벤치마크 추출용)
+models/
+benchmarks/*.json
+
 # OS
 Thumbs.db
 .DS_Store
