@@ -89,8 +89,36 @@
 
 ---
 
+## llama.cpp 백엔드 관련 (llama-cpp-python 전환 작업)
+
+## 10. llama-cpp-python 소스 빌드 실패
+
+- **증상**: `pip install llama-cpp-python`이 "Failed building wheel"로 실패.
+- **원인**: PyPI에 Windows 바이너리 휠이 없고, 소스 빌드에는 MSVC 빌드 도구가 필요한데 이 머신에 없음.
+- **해결**: GitHub 릴리스의 사전빌드 휠 설치.
+  ```bash
+  pip install https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.36/llama_cpp_python-0.3.36-py3-none-win_amd64.whl
+  ```
+  (최신 태그는 변형 빌드(vulkan/cuda 등)는 있어도 plain CPU win wheel이 없는 경우가 있어 버전 확인 필요)
+
+## 11. Ollama 실행 관리 프로세스의 이름이 `llama-server`라 메모리 추적 누락
+
+- **증상**: 벤치마크에서 Ollama 쪽 RSS 피크가 38MB 등으로 비정상적으로 작게 기록됨.
+- **원인**: 최신 Ollama는 추론을 별도 프로세스(`llama-server`)로 띄우므로, 이름 매칭 `ollama`만 하면 모델이 올라간 프로세스를 놓침. Get-Process로 확인해보니 `llama-server` WorkingSet이 약 4.9GB였음.
+- **해결**: 샘플러 매칭을 `"ollama" or "llama-server"`로 수정. 또한 Ollama 공식 `/api/ps`의 모델 상주 크기를 병행 기록.
+
+## 12. Ollama에서 요청 옵션 변경 시 모델이 재로딩됨 (TTFT 25s 폭발)
+
+- **증상**: 벤치마크 첫 질문의 TTFT가 매번 약 25초.
+- **원인**: Ollama는 이전 요청과 옵션이 다르면(`num_ctx` 등) 러너를 재기동. 기본 컨텍스트로 워밍업 후 `num_ctx=2048` 지정 요청이 와서 재로딩 발생.
+- **해결**: 앱 레벨에서는 동일 옵션 일관성 유지로 방지. 이는 llama.cpp 인프로세스 방식에서는 원천적으로 발생하지 않는 문제 (BENCHMARKS.md §3.2 참고).
+
+---
+
 ## 메모 / 미해결
 
 - [ ] Top-1(`k=1`) 회수 방식은 "질문이 두 조문에 걸친 경우" 정밀도가 떨어짐 → Top-K + 출처 카드 확대 필요 (IMPLEMENTATION.md §5).
 - [ ] 프롬프트 인젝션 방어가 아직 없음 → 법률 외 질문도 조문을 억지로 근거 삼아 답변할 수 있음.
 - [ ] `local-qwen-law-rag.py`는 노트북 변환본이므로 `get_ipython()` 의존성이 남아 있어 **IPython 환경에서만 직접 실행 가능** → 순수 .py화 또는Streamlit 앱으로 통합 필요.
+- [ ] llama.cpp가 Ollama 대비 tok/s가 20% 낮음 → P코어 affinity pinning 실험 필요 (BENCHMARKS.md §3.1).
+- [ ] llama.cpp 인프로세스 방식은 앱 RSS가 약 8GB로 Ollama(러너 4.9GB + 앱 별도)보다 큼 → KV 캐시 양자화(`--cache-type-k q8_0`)나 더 작은 모델로 완화 검토.

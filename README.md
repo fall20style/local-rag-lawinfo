@@ -16,16 +16,23 @@
 
 ```
 local-rag-law/
-├── app-local-qwen-law-rag.py      # Streamlit 챗봇 UI (최종 실행 파일, Qwen2.5 7B)
-├── local-qwen-law-rag.ipynb       # Jupyter 실험 노트북 (Gemma2 9B)
-├── local-gemma2-law-rag.ipynb     # Jupyter 실험 노트북 (Gemma2 9B)
-├── local-qwen-law-rag.py          # 노트북의 .py 변환본
-├── screenshot.png                 # Streamlit 실행 예시 화면
-└── docs 문서
-    ├── README.md                  # (이 문서)
-    ├── ARCHITECTURE.md            # 시스템 아키텍처 상세
-    ├── IMPLEMENTATION.md          # 구현 상세 (파일·셀별 해설)
-    └── TROUBLES.md                # 트러블슈팅 기록
+├── app-local-qwen-law-rag.py        # Streamlit 챗봇 UI (Ollama 백엔드, Qwen2.5 7B)
+├── app-local-qwen-law-rag-llamacpp.py  # Streamlit 챗봇 UI (llama-cpp-python 백엔드)
+├── law_rag_core.py                  # 공용 RAG 코어 (배치 상관없이 재사용)
+├── bench-rag-perf.py                # 속도/메모리 벤치마크 (Ollama 대 llama.cpp)
+├── local-qwen-law-rag.ipynb         # Jupyter 실험 노트북 (Gemma2 9B)
+├── local-gemma2-law-rag.ipynb       # Jupyter 실험 노트북 (Gemma2 9B)
+├── local-qwen-law-rag.py            # 노트북의 .py 변환본
+├── models/                          # GGUF (gitignore, Ollama 캐시에서 추출)
+├── benchmarks/                      # 측정 원시 데이터 + 자동 리포트
+├── screenshot.png                   # Streamlit 실행 예시 화면
+└── 문서
+    ├── README.md        # (이 문서)
+    ├── ARCHITECTURE.md  # 시스템 아키텍처 상세
+    ├── IMPLEMENTATION.md # 구현 상세
+    ├── TROUBLES.md      # 트러블슈팅 기록
+    ├── BENCHMARKS.md    # Ollama vs llama-cpp-python 측정 리포트
+    └── BLOG_POST.md     # 소개용 블로그 글
 ```
 
 ## 🔍 시연 시나리오
